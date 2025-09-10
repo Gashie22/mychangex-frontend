@@ -11,27 +11,165 @@ import {
   Platform,
   ScrollView,
   SafeAreaView,
-  StatusBar
+  StatusBar,
+  Alert,
+  ActivityIndicator
 } from 'react-native';
+// Make sure this import is present and correct
 import { useNavigation } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialIcons, FontAwesome } from '@expo/vector-icons';
+import { sendOTP, formatZimbabwePhone } from './supabase';
 
 const { width, height } = Dimensions.get('window');
 
 const SignupScreen = () => {
+  // Make sure this hook is the first thing called inside the component
   const navigation = useNavigation();
   const [phoneNumber, setPhoneNumber] = useState('');
   const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [fullName, setFullName] = useState('');
   const [showPin, setShowPin] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   useLayoutEffect(() => {
     navigation.setOptions({
       headerShown: false,
     });
   }, []);
+
+  const validatePhoneNumber = (phone) => {
+    const cleaned = phone.replace(/\D/g, '');
+    
+    if (cleaned.length === 9 && cleaned.startsWith('7')) {
+      return true;
+    }
+    
+    if (cleaned.length === 10 && cleaned.startsWith('07')) {
+      return true;
+    }
+    
+    if (cleaned.length === 12 && cleaned.startsWith('2637')) {
+      return true;
+    }
+    
+    return false;
+  };
+
+  const formatPhoneDisplay = (text) => {
+    const cleaned = text.replace(/\D/g, '');
+    
+    if (cleaned.length === 12 && cleaned.startsWith('263')) {
+      return `${cleaned.slice(0, 3)} ${cleaned.slice(3, 6)} ${cleaned.slice(6, 9)} ${cleaned.slice(9, 12)}`;
+    }
+    
+    if (cleaned.length <= 3) {
+      return cleaned;
+    } else if (cleaned.length <= 6) {
+      return `${cleaned.slice(0, 3)} ${cleaned.slice(3)}`;
+    } else {
+      return `${cleaned.slice(0, 3)} ${cleaned.slice(3, 6)} ${cleaned.slice(6, 10)}`;
+    }
+  };
+
+  const handlePhoneChange = (text) => {
+    if (text.length < phoneNumber.length) {
+      setPhoneNumber(text);
+      return;
+    }
+    
+    const cleaned = text.replace(/\D/g, '');
+    const formatted = formatPhoneDisplay(cleaned);
+    setPhoneNumber(formatted);
+  };
+
+  const validateForm = () => {
+    if (!fullName.trim()) {
+      Alert.alert('Error', 'Please enter your full name');
+      return false;
+    }
+
+    if (fullName.trim().length < 2) {
+      Alert.alert('Error', 'Full name must be at least 2 characters');
+      return false;
+    }
+
+    const cleanedPhoneNumber = phoneNumber.replace(/\D/g, '');
+    
+    if (!validatePhoneNumber(cleanedPhoneNumber)) {
+      Alert.alert('Invalid Phone Number', 
+        'Please enter a valid Zimbabwe mobile number (e.g., 0784739341 or 263784739341)'
+      );
+      return false;
+    }
+
+    if (!pin.trim() || pin.length !== 4) {
+      Alert.alert('Error', 'Please enter a 4-digit PIN');
+      return false;
+    }
+
+    if (!confirmPin.trim() || confirmPin.length !== 4) {
+      Alert.alert('Error', 'Please confirm your 4-digit PIN');
+      return false;
+    }
+
+    if (pin !== confirmPin) {
+      Alert.alert('Error', 'PINs do not match. Please try again.');
+      return false;
+    }
+
+    const uniqueDigits = new Set(pin.split(''));
+    if (uniqueDigits.size === 1) {
+      Alert.alert('Weak PIN', 'Please choose a PIN with different digits for better security');
+      return false;
+    }
+
+    return true;
+  };
+
+  const handleSignup = async () => {
+    if (!validateForm()) {
+      return;
+    }
+
+    setLoading(true);
+    
+    try {
+      const cleanedPhoneNumber = phoneNumber.replace(/\D/g, '');
+      
+      const result = await sendOTP(cleanedPhoneNumber);
+      
+      if (result.success) {
+        const formattedPhone = formatZimbabwePhone(cleanedPhoneNumber);
+        
+        navigation.navigate('OTPVerification', { 
+          phoneNumber: formattedPhone,
+          signupData: {
+            fullName: fullName.trim(),
+            pin: pin,
+            isSignup: true
+          }
+        });
+      } else {
+        Alert.alert('Error', result.error || 'Failed to send verification code');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Something went wrong. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePinChange = (text) => {
+    const numericText = text.replace(/[^0-9]/g, '');
+    setPin(numericText);
+  };
+
+  const handleConfirmPinChange = (text) => {
+    const numericText = text.replace(/[^0-9]/g, '');
+    setConfirmPin(numericText);
+  };
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -51,9 +189,7 @@ const SignupScreen = () => {
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            {/* Centered Content */}
             <View style={styles.contentContainer}>
-              {/* Logo Section */}
               <View style={styles.logoContainer}>
                 <Image 
                   source={require('../assets/logo.png')}
@@ -63,8 +199,6 @@ const SignupScreen = () => {
                 <Text style={styles.welcomeText}>Create Account</Text>
                 <Text style={styles.subText}>Join us to get started</Text>
               </View>
-
-              {/* Form Section */}
               <View style={styles.formContainer}>
                 <View style={styles.inputContainer}>
                   <MaterialIcons 
@@ -84,6 +218,7 @@ const SignupScreen = () => {
                     textContentType="name"
                     autoCorrect={false}
                     returnKeyType="next"
+                    maxLength={50}
                   />
                 </View>
 
@@ -96,12 +231,12 @@ const SignupScreen = () => {
                   />
                   <TextInput
                     style={styles.input}
-                    placeholder="Phone Number"
+                    placeholder="Phone Number (e.g., 078 473 9341)"
                     placeholderTextColor="rgba(255,255,255,0.6)"
                     value={phoneNumber}
-                    onChangeText={setPhoneNumber}
+                    onChangeText={handlePhoneChange}
                     keyboardType="phone-pad"
-                    maxLength={10}
+                    maxLength={16}
                     autoComplete="tel"
                     textContentType="telephoneNumber"
                     returnKeyType="next"
@@ -120,7 +255,7 @@ const SignupScreen = () => {
                     placeholder="4-digit PIN"
                     placeholderTextColor="rgba(255,255,255,0.6)"
                     value={pin}
-                    onChangeText={setPin}
+                    onChangeText={handlePinChange}
                     secureTextEntry={!showPin}
                     keyboardType="numeric"
                     maxLength={4}
@@ -153,19 +288,56 @@ const SignupScreen = () => {
                     placeholder="Confirm 4-digit PIN"
                     placeholderTextColor="rgba(255,255,255,0.6)"
                     value={confirmPin}
-                    onChangeText={setConfirmPin}
+                    onChangeText={handleConfirmPinChange}
                     secureTextEntry={!showPin}
                     keyboardType="numeric"
                     maxLength={4}
                     autoComplete="password"
                     textContentType="password"
                     returnKeyType="done"
+                    onSubmitEditing={handleSignup}
                   />
                 </View>
 
+                {/* PIN Strength Indicator */}
+                {pin.length > 0 && (
+                  <View style={styles.pinStrengthContainer}>
+                    <MaterialIcons 
+                      name={pin.length === 4 && new Set(pin.split('')).size > 1 ? 'check-circle' : 'info'} 
+                      size={16} 
+                      color={pin.length === 4 && new Set(pin.split('')).size > 1 ? '#4CAF50' : 'rgba(255,255,255,0.6)'} 
+                    />
+                    <Text style={styles.pinStrengthText}>
+                      {pin.length < 4 
+                        ? `${4 - pin.length} more digits needed` 
+                        : new Set(pin.split('')).size === 1 
+                        ? 'Use different digits for better security'
+                        : 'Good PIN strength'
+                      }
+                    </Text>
+                  </View>
+                )}
+
+                {/* PIN Match Indicator */}
+                {confirmPin.length > 0 && (
+                  <View style={styles.pinMatchContainer}>
+                    <MaterialIcons 
+                      name={pin === confirmPin && pin.length === 4 ? 'check-circle' : 'error'} 
+                      size={16} 
+                      color={pin === confirmPin && pin.length === 4 ? '#4CAF50' : '#F44336'} 
+                    />
+                    <Text style={[styles.pinMatchText, {
+                      color: pin === confirmPin && pin.length === 4 ? '#4CAF50' : '#F44336'
+                    }]}>
+                      {pin === confirmPin && pin.length === 4 ? 'PINs match' : 'PINs do not match'}
+                    </Text>
+                  </View>
+                )}
+
                 <TouchableOpacity 
-                  style={styles.signupButton}
-                  onPress={() => navigation.navigate('Home')}
+                  style={[styles.signupButton, loading && styles.buttonDisabled]}
+                  onPress={handleSignup}
+                  disabled={loading}
                   activeOpacity={0.8}
                 >
                   <LinearGradient
@@ -174,7 +346,11 @@ const SignupScreen = () => {
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 0 }}
                   >
-                    <Text style={styles.buttonText}>Sign Up</Text>
+                    {loading ? (
+                      <ActivityIndicator color="#0136c0" size="small" />
+                    ) : (
+                      <Text style={styles.buttonText}>Create Account</Text>
+                    )}
                   </LinearGradient>
                 </TouchableOpacity>
 
@@ -219,7 +395,7 @@ const styles = StyleSheet.create({
   logoContainer: {
     alignItems: 'center',
     paddingTop: height * 0.05,
-    paddingBottom: height * 0.04,
+    paddingBottom: height * 0.03,
   },
   logo: {
     width: width * 0.3,
@@ -281,6 +457,29 @@ const styles = StyleSheet.create({
   visibilityToggle: {
     padding: 8,
   },
+  pinStrengthContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    paddingHorizontal: 4,
+  },
+  pinStrengthText: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.6)',
+    marginLeft: 6,
+    fontWeight: '500',
+  },
+  pinMatchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingHorizontal: 4,
+  },
+  pinMatchText: {
+    fontSize: 12,
+    marginLeft: 6,
+    fontWeight: '500',
+  },
   signupButton: {
     width: '100%',
     borderRadius: 10,
@@ -292,6 +491,9 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 4,
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
   buttonGradient: {
     paddingVertical: 16,
